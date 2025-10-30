@@ -29,10 +29,6 @@
 - No group add  
 - Works on **Kali, Fedora, Arch, Ubuntu, FreeBSD**
 
-**Test**:
-```bash
-./torenv.py
-
 ---
 
 ## Installation
