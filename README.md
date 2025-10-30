@@ -9,21 +9,6 @@
 
 ---
 
-## Installation
-
-### Option 1: From GitHub (Recommended)
-
-```bash
-git clone https://github.com/bl4ckethh/torenv.git
-cd torenv
-python3 -m venv venv
-source venv/bin/activate
-pip install -e .
-chmod +x torenv.py
-./torenv.py
-
----
-
 ## Features
 
 - Auto-install & configure Tor
@@ -47,3 +32,20 @@ chmod +x torenv.py
 **Test**:
 ```bash
 ./torenv.py
+
+---
+
+## Installation
+
+### Option 1: From GitHub (Recommended)
+
+```bash
+git clone https://github.com/bl4ckethh/torenv.git
+cd torenv
+python3 -m venv venv
+source venv/bin/activate
+pip install -e .
+chmod +x torenv.py
+./torenv.py
+
+---
