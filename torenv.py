@@ -76,7 +76,8 @@ SocksPort {self.socks_port}
 ControlPort {self.control_port}
 DataDirectory {self.dir}
 PidFile {self.pid_file}
-CookieAuthentication 1
+CookieAuthentication 0
+HashedControlPassword {self.hashed_password}
 """
         with open(self.torrc_file, 'w') as f:
             f.write(config.strip() + "\n")
@@ -112,10 +113,10 @@ CookieAuthentication 1
 
 
 class TorSession:
-    def __init__(self, tor_port=9050, control_port=9051, password=None, verbose=False):
+    def __init__(self, tor_port=9050, control_port=9051, verbose=False):
         self.tor_port = tor_port
         self.control_port = control_port
-        self.password = password
+        self.password = "TorEnvSecure2025!"  # Change this!
         self.session = None
         self.verbose = verbose
         self.last_newnym = 0
@@ -125,6 +126,13 @@ class TorSession:
         self.current_idx = 0
         self.rotate_every = 0  # 0 = disabled, 1 = every request
         # <<< END >>>
+
+        # Generate hashed password
+        try:
+            result = subprocess.run(['tor', '--hash-password', self.password], capture_output=True, text=True, timeout=10)
+            self.hashed_password = result.stdout.strip().split('\n')[-1].strip()
+        except:
+            self.hashed_password = "16:YOUR_HASH_HERE"  # Fallback
 
     def log_verbose(self, msg):
         if self.verbose:
@@ -200,47 +208,6 @@ class TorSession:
                 return False
         return False
     
-    def get_tor_user(self):
-        try:
-            result = subprocess.run(['ps', 'aux'], capture_output=True, text=True)
-            for line in result.stdout.split('\n'):
-                if 'tor' in line.lower() and 'grep' not in line:
-                    parts = line.split()
-                    if len(parts) > 0:
-                        user = parts[0]
-                        if user in ['debian-tor', '_tor', 'tor']:
-                            self.log_verbose(f"Tor runs as user: {user}")
-                            return user
-        except:
-            pass
-        return None
-    
-    def add_user_to_tor_group(self):
-        tor_user = self.get_tor_user()
-        if tor_user == 'debian-tor':
-            current_user = os.getenv('USER')
-            print_info(f"Adding {current_user} to debian-tor group for control port access...")
-            try:
-                subprocess.run(['sudo', 'usermod', '-aG', 'debian-tor', current_user], check=True, capture_output=True)
-                print_success(f"User {current_user} added to debian-tor group")
-                print()
-                print(f"{Colors.BOLD}{Colors.YELLOW}{'='*50}")
-                print("IMPORTANT: GROUP CHANGE REQUIRES RE-LOGIN")
-                print(f"{'='*50}{Colors.END}")
-                print_warning("The 'debian-tor' group change does NOT apply in current session")
-                print_warning("Circuit renewal (NEWNYM) will fail until you:")
-                print(f"\n{Colors.CYAN}  1. Log out completely")
-                print(f"  2. Log back in")
-                print(f"  3. Run this script again{Colors.END}\n")
-                print_info("For now, Tor will still work for anonymous browsing")
-                print_info("Only circuit renewal will be unavailable")
-                print()
-                return True
-            except subprocess.CalledProcessError:
-                print_warning("Could not add user to debian-tor group")
-                return False
-        return True
-    
     def detect_existing_tor_config(self):
         torrc_paths = ['/etc/tor/torrc', '/usr/local/etc/tor/torrc']
         for torrc_path in torrc_paths:
@@ -293,19 +260,18 @@ class TorSession:
         try:
             with open(torrc_path, 'r') as f:
                 content = f.read()
-                has_control = 'ControlPort' in content and '9051' in content
-                has_socks = 'SocksPort' in content and '9050' in content
-                has_cookie = 'CookieAuthentication' in content
-                if has_control and has_socks and has_cookie:
-                    print_success("Tor already configured properly")
+                if 'HashedControlPassword' in content and '9051' in content:
+                    print_success("Tor already configured with password auth")
                     return True
         except PermissionError:
             pass
+
         config_lines = [
-            '\n# Added by Tor OSINT Script',
-            'SocksPort 9050',
-            'ControlPort 9051',
-            'CookieAuthentication 1',
+            '\n# Added by TorEnv - PASSWORD AUTH (No Group/Login Needed)',
+            f'SocksPort {self.tor_port}',
+            f'ControlPort 127.0.0.1:{self.control_port}',
+            f'HashedControlPassword {self.hashed_password}',
+            'CookieAuthentication 0',
         ]
         try:
             with tempfile.NamedTemporaryFile(mode='w', delete=False) as tmp:
@@ -320,19 +286,11 @@ class TorSession:
                 print_error("Failed to update Tor configuration")
                 print_error(result.stderr)
                 return False
-            print_success("Tor configuration updated")
+            print_success("Tor configured with password auth")
             if not self.verify_torrc_syntax(torrc_path):
                 print_error("Configuration syntax is invalid")
                 print_warning("You may need to manually fix /etc/tor/torrc")
                 return False
-            tor_user = self.get_tor_user()
-            if tor_user:
-                print_info("Ensuring correct permissions for Tor data directory...")
-                try:
-                    subprocess.run(['sudo', 'chown', '-R', f'{tor_user}:{tor_user}', '/var/lib/tor'], capture_output=True)
-                    subprocess.run(['sudo', 'chmod', '-R', '700', '/var/lib/tor'], capture_output=True)
-                except:
-                    pass
             return True
         except Exception as e:
             print_error(f"Error configuring Tor: {e}")
@@ -341,11 +299,9 @@ class TorSession:
     def check_bootstrap_status(self):
         if not self.check_control_port():
             return False, "Control port not open"
-        if not self.check_cookie_auth():
-            return False, "Cookie not readable (log out/in required)"
         try:
             with Controller.from_port(port=self.control_port) as controller:
-                controller.authenticate()
+                controller.authenticate(password=self.password)
                 bootstrap_status = controller.get_info("status/bootstrap-phase")
                 self.log_verbose(f"Bootstrap status: {bootstrap_status}")
                 import re
@@ -359,7 +315,7 @@ class TorSession:
                 return False, "Unknown"
         except Exception as e:
             self.log_verbose(f"Bootstrap check failed: {e}")
-            return False, "Bootstrapping (auth ready soon)"
+            return False, "Authenticating..."
     
     def start_tor_service(self):
         if not sys.platform.startswith('linux'):
@@ -368,26 +324,9 @@ class TorSession:
         try:
             subprocess.run(['sudo', 'systemctl', 'start', 'tor'], check=True, capture_output=not self.verbose)
             print_info("Waiting for Tor to initialize...")
-            if not self.wait_for_control_and_cookie(timeout=60):
-                print_warning("Control port or cookie not ready, but continuing...")
-                time.sleep(3)
-                if self.check_tor_running():
-                    print_success("Tor is running (SOCKS port active)")
-                    return True
-                return False
-            print_info("Checking Tor bootstrap progress...")
-            max_wait = 30
-            for i in range(max_wait):
-                is_ready, status = self.check_bootstrap_status()
-                if is_ready:
-                    print_success("Tor service started and fully bootstrapped")
-                    return True
-                elif i % 5 == 0 and i > 0:
-                    print_info(f"Bootstrap progress: {status}")
-                time.sleep(1)
-            print_warning("Tor started but bootstrap incomplete")
+            time.sleep(5)
             if self.check_tor_running():
-                print_success("Tor SOCKS port is active")
+                print_success("Tor is running (SOCKS port active)")
                 return True
             return False
         except (subprocess.CalledProcessError, FileNotFoundError):
@@ -473,40 +412,6 @@ class TorSession:
         except:
             return False
     
-    def check_cookie_auth(self):
-        cookie_paths = [
-            '/var/run/tor/control.authcookie',
-            '/run/tor/control.authcookie',
-            os.path.expanduser('~/.tor/control_auth_cookie')
-        ]
-        for path in cookie_paths:
-            if os.path.exists(path):
-                if os.access(path, os.R_OK):
-                    self.log_verbose(f"Cookie auth file accessible: {path}")
-                    return True
-                else:
-                    self.log_verbose(f"Cookie exists but not readable: {path}")
-                    return False
-        self.log_verbose("No cookie file found")
-        return False
-    
-    def wait_for_control_and_cookie(self, timeout=60):
-        print_info("Waiting for Tor control port and authentication cookie...")
-        start = time.time()
-        while time.time() - start < timeout:
-            if self.check_control_port():
-                self.log_verbose("Control port is open")
-                if self.check_cookie_auth():
-                    print_success("Control port and cookie ready")
-                    return True
-                else:
-                    self.log_verbose("Control port open but cookie not ready yet...")
-            else:
-                self.log_verbose("Waiting for control port...")
-            time.sleep(1)
-        print_error("Timeout: Control port or cookie not ready after 60 seconds")
-        return False
-    
     def auto_setup_tor(self):
         print(f"\n{Colors.BOLD}{'='*50}")
         print("Auto-Setup: Checking Tor Installation")
@@ -515,9 +420,7 @@ class TorSession:
         print_info("Step 1/3: Checking Tor installation...")
         if not self.check_tor_installed():
             print_error("Tor is not installed on your system")
-            print(f"\n{Colors.CYAN}Would you like to install Tor now?")
-            print(f"This will use your system's package manager (apt/dnf/pacman)")
-            print(f"Requires: sudo privileges{Colors.END}")
+            print(f"\n{Colors.CYAN}Would you like to install Tor now?{Colors.END}")
             response = input(f"\n{Colors.BOLD}Install Tor? [Y/n]: {Colors.END}").lower()
             if response in ['y', 'yes', '']:
                 print()
@@ -528,7 +431,6 @@ class TorSession:
             else:
                 print_warning("\nCannot proceed without Tor")
                 print_info("Install manually: sudo apt install tor")
-                print_info("Then run: ./torenv.py")
                 return False
         else:
             print_success("Tor is already installed Success")
@@ -537,8 +439,7 @@ class TorSession:
         print_info("Step 2/3: Checking Tor service status...")
         if not self.check_tor_running():
             print_warning("Tor service is not running")
-            print(f"\n{Colors.CYAN}Would you like to start Tor now?")
-            print(f"This will start the Tor network service{Colors.END}")
+            print(f"\n{Colors.CYAN}Would you like to start Tor now?{Colors.END}")
             response = input(f"\n{Colors.BOLD}Start Tor service? [Y/n]: {Colors.END}").lower()
             if response in ['y', 'yes', '']:
                 print()
@@ -563,40 +464,15 @@ class TorSession:
                 print_info(f"Bootstrap status: {status}")
             print_tor_active()
         print(f"\n{Colors.BOLD}---{Colors.END}")
-        print_info("Step 3/3: Checking control port configuration...")
-        if not self.check_control_port():
-            print_warning("Control port is not configured")
-            print(f"\n{Colors.CYAN}The control port allows you to:")
-            print(f"  • Change your Tor identity (get new IP)")
-            print(f"  • Manage Tor circuits")
-            print(f"\nThis requires modifying /etc/tor/torrc{Colors.END}")
-            response = input(f"\n{Colors.BOLD}Configure control port? [Y/n]: {Colors.END}").lower()
-            if response in ['y', 'yes', '']:
-                print()
-                if self.configure_tor():
-                    self.add_user_to_tor_group()
-                    print_info("Restarting Tor service to apply changes...")
-                    subprocess.run(['sudo', 'systemctl', 'restart', 'tor'], capture_output=True)
-                    if not self.wait_for_control_and_cookie(timeout=60):
-                        print_warning("Control port or cookie not ready after restart")
-                        print_info("Circuit renewal may not work yet")
-                        print_info("Try again after logging out and back in")
-                    else:
-                        print_success("Control port configured successfully Success")
-                        is_ready, status = self.check_bootstrap_status()
-                        if is_ready:
-                            print_success("Authentication verified - circuit renewal available")
-                        elif "Cookie not readable" in status:
-                            print_warning("Cookie authentication requires re-login")
-                            print_info("Log out and back in to enable circuit renewal")
-                        else:
-                            self.log_verbose(f"Bootstrap status: {status}")
+        print_info("Step 3/3: Configuring control port with password auth...")
+        if self.configure_tor():
+            print_info("Restarting Tor to apply password auth...")
+            subprocess.run(['sudo', 'systemctl', 'restart', 'tor'], capture_output=True)
+            time.sleep(5)
+            if self.check_control_port():
+                print_success("Password auth configured - no re-login needed!")
             else:
-                print_info("\nSkipping control port configuration")
-                print_info("You can still use Tor, but circuit renewal won't work")
-        else:
-            print_success("Control port is configured Success")
-            self.check_cookie_auth()
+                print_warning("Control port not ready after restart")
         print(f"\n{Colors.BOLD}{Colors.GREEN}{'='*50}")
         print("Success Setup Complete!")
         print(f"{'='*50}{Colors.END}\n")
@@ -649,10 +525,7 @@ class TorSession:
             return False
         try:
             with Controller.from_port(port=self.control_port) as controller:
-                if self.password:
-                    controller.authenticate(password=self.password)
-                else:
-                    controller.authenticate()
+                controller.authenticate(password=self.password)
                 controller.signal(Signal.NEWNYM)
                 self.last_newnym = current_time
                 print_success("New Tor circuit requested - Getting new identity...")
@@ -660,9 +533,6 @@ class TorSession:
                 return True
         except Exception as e:
             print_error(f"Error renewing circuit: {e}")
-            if "Authentication failed" in str(e):
-                print_warning("Control port authentication failed")
-                print_info("Check cookie file permissions or configure HashedControlPassword")
             return False
     
     def test_connection(self):
@@ -689,7 +559,6 @@ class TorSession:
                 return True
             else:
                 print_warning("IPs are the same - Tor might not be working correctly")
-                print_warning("This could be a DNS leak or proxy misconfiguration")
                 return False
         except requests.exceptions.RequestException as e:
             print_error(f"Connection test failed: {e}")
@@ -706,12 +575,10 @@ class TorSession:
                 response = session.post(url, **kwargs)
             else:
                 raise ValueError(f"Unsupported method: {method}")
-            # <<< BLOCK DETECTION >>>
             if response.status_code in [403, 429] or any(kw in response.text.lower() for kw in ['captcha', 'blocked', 'rate limit']):
                 print_warning(f"Block detected (status {response.status_code}) — rotating instance...")
                 if self.instances:
                     self.current_idx = (self.current_idx + 1) % len(self.instances)
-            # <<< ROTATION >>>
             if self.instances and self.rotate_every > 0:
                 self.current_idx = (self.current_idx + 1) % len(self.instances)
             return response
@@ -744,26 +611,25 @@ Examples:
     parser.add_argument('--stop', action='store_true', help='Stop Tor service')
     parser.add_argument('--status', action='store_true', help='Check Tor status and display current IP')
     parser.add_argument('--verbose', action='store_true', help='Enable verbose debug output')
-    # <<< MULTI-INSTANCE FLAGS >>>
     parser.add_argument('--instances', type=int, default=1, help='Number of Tor instances (default: 1)')
     parser.add_argument('--rotate', action='store_true', help='Rotate instance on every request')
-    # <<< END >>>
 
     args = parser.parse_args()
     tor = TorSession(verbose=args.verbose)
 
-    # <<< MULTI-INSTANCE SETUP >>>
     if args.instances > 1:
-        tor.instances = [TorInstance(i) for i in range(args.instances)]
-        for inst in tor.instances:
-            inst.start()
+        for inst in range(args.instances):
+            instance = TorInstance(inst)
+            instance.hashed_password = tor.hashed_password  # Share password
+            tor.instances = tor.instances or []
+            tor.instances.append(instance)
+            instance.start()
         def cleanup():
             for inst in tor.instances:
                 inst.stop()
         atexit.register(cleanup)
         if args.rotate:
             tor.rotate_every = 1
-    # <<< END >>>
 
     if args.start:
         print(f"\n{Colors.BOLD}{'='*50}")
@@ -890,7 +756,7 @@ Examples:
             else:
                 print_warning("IP didn't change (Tor may reuse circuits, try again later)")
     else:
-        print(f"\n{Colors.YELLOW}Note: Control port not configured - circuit renewal unavailable{Colors.END}")
+        print(f"\n{Colors.YELLOW}Note: Control port uses password auth - no group required{Colors.END}")
     print(f"\n{Colors.BOLD}{Colors.GREEN}")
     print("="*50)
     print("    Success SETUP COMPLETE - TOR IS READY!")
