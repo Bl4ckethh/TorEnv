@@ -26,4 +26,6 @@
 ```bash
 git clone https://github.com/bl4ckethh/torenv.git
 cd torenv
+python3 -m venv venv
+source venv/bin/activate
 pip install -e .
