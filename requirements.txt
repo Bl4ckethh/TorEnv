@@ -1,0 +1,8 @@
+# Core dependencies for Tor OSINT script
+requests>=2.31.0
+PySocks>=1.7.1
+stem>=1.8.2
+
+# Optional: Enhanced functionality
+urllib3>=2.0.0
+certifi>=2023.7.22
