@@ -3,6 +3,9 @@
 **Fast, Safe, Multi-Instance Tor Proxy with Automatic IP Rotation**  
 **Kali Linux Ready** | **pip installable**
 
+[<image-card alt="Stars" src="https://img.shields.io/github/stars/Bl4ckethh/TorEnv?style=social" ></image-card>](https://github.com/Bl4ckethh/TorEnv/stargazers)
+[<image-card alt="OSINT" src="https://img.shields.io/badge/OSINT-Tools-blue" ></image-card>](https://github.com/topics/osint)
+
 [![Python 3.8+](https://img.shields.io/badge/python-3.8%2B-blue)](https://python.org)
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
 
