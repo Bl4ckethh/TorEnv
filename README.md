@@ -25,6 +25,6 @@
 ### Option 1: From GitHub (Recommended)
 
 ```bash
-git clone https://github.com/yourusername/torenv.git
+git clone https://github.com/bl4ckethh/torenv.git
 cd torenv
 pip install -e .
